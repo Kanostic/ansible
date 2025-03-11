@@ -1,0 +1,57 @@
+---
+- name: Retrieve only newly created instances
+  ansible.builtin.command: >
+    aws ec2 describe-instances
+    --region "{{ aws_region }}"
+    --filters "Name=instance-state-name,Values=running,stopped,stopping"
+    --query 'Reservations[*].Instances[?LaunchTime > `{{ deployment_start_time }}`].{
+      InstanceId:InstanceId,
+      State:State.Name,
+      InstanceType:InstanceType,
+      LaunchTime:LaunchTime,
+      PrivateIP:PrivateIpAddress,
+      PublicIP:PublicIpAddress,
+      Tags:Tags[*]
+    }'
+    --output json
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"
+  register: new_ec2_instances
+
+- name: Debug new EC2 instance public IPs
+  debug:
+    msg: "Public IP address: {{ item.PublicIP }}"
+  loop: "{{ new_ec2_instances.stdout | from_json | flatten(1) }}"
+  when: new_ec2_instances.stdout | from_json | length > 0
+
+- name: Process command_to_run variables
+  set_fact:
+    processed_command: |
+      export AWS_ACCESS_KEY_ID="{{ assumed_role.sts_creds.access_key }}"
+      export AWS_SECRET_ACCESS_KEY="{{ assumed_role.sts_creds.secret_key }}"
+      export AWS_SESSION_TOKEN="{{ assumed_role.sts_creds.session_token }}"
+      {{ command_to_run }}
+  vars:
+    aws_account_id: "{{ aws_account_id }}"
+    aws_region: "{{ aws_region }}"
+    vpc_id: "{{ vpc_id }}"
+    deployment_start_time: "{{ deployment_start_time }}"
+  when: command_to_run is defined
+
+- name: Test SSH connection and run commands
+  ansible.builtin.shell: |
+    ssh -o StrictHostKeyChecking=no -i "/tmp/terraform_ssh_key" ec2-user@{{ item.PublicIP }} "
+    {{ processed_command }}
+    "
+  delegate_to: localhost
+  register: ssh_test_results
+  loop: "{{ new_ec2_instances.stdout | from_json | flatten(1) }}"
+  when: new_ec2_instances.stdout | from_json | length > 0 and item.PublicIP is defined
+  ignore_errors: true
+
+- name: Debug SSH test results
+  debug:
+    msg: "{{ ssh_test_results.results | map(attribute='stdout_lines') | list }}"
+  when: ssh_test_results is defined

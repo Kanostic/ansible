@@ -1,0 +1,24 @@
+- setup:
+
+- set_fact:
+    compressed_folder_name: "content-{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':','') }}"
+
+- name: compress config
+  archive:
+    path:
+      - /tmp/config_content/*
+    format: gz
+    dest: "/tmp/{{ compressed_folder_name }}.tar.gz"
+  become: true
+
+- shell: |
+    curl -k \
+      --header "Content-Type: application/octet-stream" \
+      --request PUT --data-binary @'/tmp/{{ compressed_folder_name }}.tar.gz' "{{ upload_url }}"
+  become: true
+
+- name: clean up load dir
+  file:
+    state: absent
+    path: /tmp/config_content
+  become: true

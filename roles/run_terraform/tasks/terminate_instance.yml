@@ -1,0 +1,105 @@
+- name: Debug instance states
+  debug:
+    var: instance_states
+  when: instance_states.results | length > 0
+
+- name: Retrieve security groups associated with the instance
+  amazon.aws.ec2_instance_info:
+    region: "{{ aws_region }}"
+    instance_ids: "{{ new_instance_id }}"
+  register: instance_info
+  when: new_instance_id is defined
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"
+
+- name: Set fact for security group IDs
+  set_fact:
+    security_group_ids: "{{ instance_info.instances[0].security_groups | map(attribute='group_id') | list }}"
+  when: instance_info.instances | length > 0
+
+- name: Retrieve ENIs associated with the instance
+  amazon.aws.ec2_eni_info:
+    region: "{{ aws_region }}"
+    filters:
+      attachment.instance-id: "{{ new_instance_id }}"
+  register: eni_info
+  when: new_instance_id is defined
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"
+
+- name: Set fact for ENI IDs
+  set_fact:
+    eni_ids: "{{ eni_info.network_interfaces | map(attribute='network_interface_id') | list }}"
+  when: eni_info.network_interfaces | length > 0
+
+- name: Set fact for public IP
+  set_fact:
+    public_ip: "{{ eni_info.network_interfaces[0].association.public_ip }}"
+  when: eni_info.network_interfaces | length > 0 and eni_info.network_interfaces[0].association.public_ip is defined
+
+- name: Terminate the instance
+  amazon.aws.ec2_instance:
+    state: absent
+    instance_ids:
+      - "{{ new_instance_id }}"
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"
+    AWS_DEFAULT_REGION: "{{ aws_region }}"
+  when: new_instance_id is defined
+
+- name: Delete associated key pair
+  amazon.aws.ec2_key:
+    name: "{{ key_name }}"
+    state: absent
+    region: "{{ aws_region }}"
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"
+  when: key_name is defined
+
+- name: Delete ENIs
+  amazon.aws.ec2_eni:
+    eni_id: "{{ item }}"
+    state: absent
+    region: "{{ aws_region }}"
+  loop: "{{ eni_ids }}"
+  when: eni_ids | length > 0
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"
+
+- name: Release Elastic IP
+  amazon.aws.ec2_eip:
+    state: absent
+    public_ip: "{{ public_ip }}"
+    region: "{{ aws_region }}"
+  when: public_ip is defined
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"
+
+- name: Delete security groups
+  amazon.aws.ec2_security_group:
+    group_id: "{{ item }}"
+    state: absent
+    region: "{{ aws_region }}"
+  loop: "{{ security_group_ids }}"
+  when: security_group_ids | length > 0
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"
+
+# - name: Debug SSH test results
+#   debug:
+#     msg: "{{ ssh_test_results.results | map(attribute='stdout_lines') | list }}"
+#   when: ssh_test_results is defined

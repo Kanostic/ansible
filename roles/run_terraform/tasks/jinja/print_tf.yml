@@ -1,0 +1,9 @@
+- shell: |
+    cat "{{ item.path }}"
+  become: true
+  register: read_result
+
+- name: "{{ item.path }}"
+  debug:
+    msg: "{{ read_result.stdout_lines }}"
+  no_log: false

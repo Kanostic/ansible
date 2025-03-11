@@ -1,0 +1,88 @@
+---
+- name: Parse EC2 instances JSON
+  set_fact:
+    parsed_instances: "{{ new_ec2_instances.stdout | from_json | flatten(1) }}"
+  when: new_ec2_instances is defined and new_ec2_instances.stdout is defined
+
+- name: Compile instance summaries
+  set_fact:
+    instance_summaries: "{{ instance_summaries | default([]) + [{
+      'instance_id': instance.InstanceId,
+      'state': instance.State,
+      'type': instance.InstanceType,
+      'private_ip': instance.PrivateIP,
+      'public_ip': instance.PublicIP | default('N/A'),
+      'launch_time': instance.LaunchTime,
+      'region': aws_region,
+      'account': aws_account_id,
+      'name': (instance.Tags | selectattr('Key', 'equalto', 'Name') | map(attribute='Value') | first) | default('unnamed')
+    }] }}"
+  loop: "{{ parsed_instances }}"
+  loop_control:
+    loop_var: instance
+  when: parsed_instances is defined
+
+- name: Process SSH command outputs
+  set_fact:
+    ssh_command_results: "{{ ssh_command_results | default([]) + [{
+      'instance_id': item.item.InstanceId,
+      'instance_ip': item.item.PublicIP,
+      'status': item.rc | default('failed'),
+      'output': item.stdout_lines | select('match', '^(?!Warning:).*') | list | regex_replace('^(.*)$', '    \\1'),
+      'errors': item.stderr_lines | select('match', '^(?!Warning:).*') | list | regex_replace('^(.*)$', '    \\1')
+    }] }}"
+  loop: "{{ ssh_test_results.results }}"
+  when: ssh_test_results is defined
+
+- name: Display deployment summary
+  debug:
+    msg: |
+      ═══════════════════════════════════════════════════════════════════════════
+      📊 EC2 Deployment Summary
+      ═══════════════════════════════════════════════════════════════════════════
+      🕒 Deployment Time: {{ ansible_date_time.iso8601 }}
+
+      🖥️  Instances Created:
+      {% for instance in instance_summaries | default([]) %}
+      ───────────────────────────────────────────────────────────────────────────
+      Instance ID : {{ instance.instance_id }}
+      Name        : {{ instance.name }}
+      State       : {{ instance.state }}
+      Type        : {{ instance.type }}
+      Private IP  : {{ instance.private_ip }}
+      Public IP   : {{ instance.public_ip }}
+      Region      : {{ instance.region }}
+      Account     : {{ instance.account }}
+
+      🔑 SSH Command Results:
+      {% for result in ssh_command_results | default([]) if result.instance_ip == instance.public_ip %}
+      Status: {{ '✅ Success' if result.status == 0 else '❌ Failed' }}
+
+      Output:
+      {% if result.output | length > 0 %}
+      {% for line in result.output %}
+      {{ line }}
+      {% endfor %}
+      {% else %}
+      No output
+      {% endif %}
+
+      {% if result.errors | length > 0 %}
+      Errors:
+      {% for error in result.errors %}
+      {{ error }}
+      {% endfor %}
+      {% endif %}
+      {% endfor %}
+      {% endfor %}
+      ═══════════════════════════════════════════════════════════════════════════
+
+- name: Generate deployment summary file
+  template:
+    src: roles/run_terraform/templates/deployment_summary.j2
+    dest: "/tmp/deployment_summary_{{ ansible_date_time.iso8601 | regex_replace(':', '-') }}.txt"
+  vars:
+    summary_data:
+      instances: "{{ instance_summaries | default([]) }}"
+      ssh_results: "{{ ssh_command_results | default([]) }}"
+      deployment_time: "{{ ansible_date_time.iso8601 }}"

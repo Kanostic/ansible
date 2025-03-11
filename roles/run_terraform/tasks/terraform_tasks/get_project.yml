@@ -1,0 +1,27 @@
+# https://developer.hashicorp.com/terraform/cloud-docs/api-docs/projects
+
+- name: collect project info
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/organizations/{{ tfc_organization_name }}/projects?page%5Bsize%5D=100"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+    timeout: 300
+  register: project_results
+  
+
+- set_fact:
+    project_ids: "{{ (project_results['json'] | json_query('data[*].id')) }}"
+    project_names: "{{ (project_results['json'] | json_query('data[*].attributes.name')) }}"
+  when: project_results.json.data is defined
+
+- include_tasks: terraform_tasks/filter_project.yml
+  with_items: "{{ project_results.json.data }}"
+
+- include_tasks: terraform_tasks/create_project.yml
+  when: project_id is undefined and tfc_state == "apply"

@@ -1,0 +1,23 @@
+---
+project_name:
+
+ansible_aws_role: ""
+tfc_state: "apply"
+tfc_aws_role: ""
+tfc_hostname: "app.terraform.io"
+tfc_organization_name: ""
+tfc_workspace_name: ""
+
+use_empty_tf: false
+tfc_allow_destroy: true
+
+tfc_api_run_module_auto_queue_runs: "true"
+tfc_api_run_module_speculative: "false"
+tfc_api_run_module_auto_apply: "true"
+tfc_api_run_module_allow_destroy_plan: "true"
+
+provider: "aws"
+
+no_log: false
+
+commit_variables: true

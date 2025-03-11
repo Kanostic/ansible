@@ -1,0 +1,20 @@
+- name: Process and deploy instances
+  connection: local
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Set instances fact
+      set_fact:
+        processed_instances: "{{ lookup('instance_iterator', instances, wantlist=True) }}"
+
+    - name: Process each instance with corresponding AWS account
+      include_tasks: roles/run_terraform/tasks/process_instance.yml
+      loop: "{{ processed_instances }}"
+      loop_control:
+        loop_var: current_instance
+        label: "Processing account: {{ current_instance.account }} in region: {{ current_instance.region }}"
+
+    - name: Generate instance deployment summary
+      include_tasks: roles/run_terraform/tasks/summarize_instances.yml
+      when: new_ec2_instances is defined

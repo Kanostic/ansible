@@ -1,0 +1,28 @@
+- name: collect workspace run info
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/runs/{{ getrun_result.json.data[0].id }}/plan"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+    timeout: 300
+  register: get_run_plan_info
+  
+
+- set_fact:
+    get_run_plan_info: "{{ get_run_plan_info | replace('-','_') }}"
+
+- name: Download run log
+  ansible.builtin.get_url:
+    url: "{{ get_run_plan_info.json.data.attributes.log_read_url }}"
+    dest: "/tmp/{{ getrun_result.json.data[0].id }}"
+
+- name: Terraform Cloud Plan Log
+  set_fact: 
+    plan_log: "{{ item  }}"
+  with_file:
+    - "/tmp/{{ run_id }}"

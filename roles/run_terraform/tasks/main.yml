@@ -1,0 +1,118 @@
+---
+- include_tasks: vault/get_secrets.yml
+  when: AUTH_TOKEN is undefined
+
+- block:
+    - include_tasks: tower/get_org.yml
+      when: project_name is undefined
+
+    - set_fact:
+        aap_org_name: "{{ project_name | replace('&','and') }}"
+      when: project_name is defined
+
+    - set_fact:
+        count: -1
+
+    - file:
+        path: "/tmp/config_content"
+        state: directory
+      become: true
+
+    - name: write provider.tf file to local disk
+      template:
+        src: "provider.tf.j2"
+        dest: "/tmp/config_content/provider.tf"
+        mode: 0777
+      become: true
+
+    - name: write terraform-aws-gn-base-virtual-appliance.tf file to local disk
+      template:
+        src: "terraform-aws-gn-base-virtual-appliance.tf.j2"
+        dest: "/tmp/config_content/terraform-aws-gn-base-virtual-appliance.tf"
+        mode: 0777
+      become: true
+
+    - include_tasks: jinja/create_tf.yml
+
+    - include_tasks: terraform_tasks/get_workspace.yml
+      when: tfc_workspace_name is undefined
+
+    - include_tasks: terraform_tasks/create_configuration.yml
+
+    - include_tasks: terraform_tasks/upload_config.yml
+
+    - include_tasks: terraform_tasks/get_run_state.yml
+
+  when: tfc_state != "destroy"
+
+- block:
+    - include_tasks: terraform_tasks/get_run_plan_info.yml
+    - include_tasks: terraform_tasks/get_run_apply_info.yml
+      when: tfc_state != "plan"
+  when: tfc_state != "destroy"
+
+- name: Debug the rendered environment value
+  debug:
+    msg: "Rendered environment: {{ environment }}"
+
+- name: Get current timestamp
+  set_fact:
+    deployment_start_time: "{{ ansible_date_time.iso8601 }}"
+
+- name: Debug deployment start time
+  debug:
+    msg: "Deployment start time: {{ deployment_start_time }}"
+
+- name: Wait for 25 seconds before retrieving instances
+  debug:
+    msg: "Waiting 25 seconds for EC2 instance to initialize..."
+
+- name: Pause for 25 seconds
+  ansible.builtin.pause:
+    seconds: 25
+
+- name: Verify instance creation and SSH access
+  ansible.builtin.include_tasks: verify_instance.yml
+
+- name: Retrieve only newly created instances
+  ansible.builtin.command: >
+    aws ec2 describe-instances
+    --region "{{ aws_region }}"
+    --filters "Name=instance-state-name,Values=running,stopped"
+    --query 'Reservations[*].Instances[?LaunchTime > `{{ deployment_start_time }}`].{
+      InstanceId:InstanceId,
+      State:State.Name,
+      InstanceType:InstanceType,
+      LaunchTime:LaunchTime,
+      PrivateIP:PrivateIpAddress,
+      Tags:Tags[*]
+    }'
+    --output json
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"
+  register: new_ec2_instances
+
+- name: Debug new EC2 instance details
+  debug:
+    msg: "{{ new_ec2_instances.stdout | from_yaml }}"
+
+- name: Retrieve instance state
+  ansible.builtin.command: >
+    aws ec2 describe-instance-status
+    --instance-ids "{{ item.InstanceId }}"
+    --region "{{ aws_region }}"
+    --query 'InstanceStatuses[*].InstanceState.Name'
+    --output text
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"
+  loop: "{{ new_ec2_instances.stdout | from_json | flatten(1) }}"
+  when: new_ec2_instances.stdout | from_json | length > 0
+  register: instance_states
+
+- name: Debug instance states
+  debug:
+    var: instance_states

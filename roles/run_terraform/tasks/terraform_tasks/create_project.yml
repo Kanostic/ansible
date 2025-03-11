@@ -1,0 +1,32 @@
+# https://developer.hashicorp.com/terraform/cloud-docs/api-docs/projects
+
+- name: create project
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/organizations/{{ tfc_organization_name }}/projects"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    body_format: json
+    body: '{
+      "data": {
+        "attributes": {
+          "name":"{{ aap_org_name }}"
+        },
+        "type": "projects"
+      }
+    }'
+    force_basic_auth: yes
+    validate_certs: no
+    status_code:
+      - 200
+      - 201
+      - 202
+      - 203
+      - 204
+      - 205
+    timeout: 300
+  register: create_result
+  
+
+- include_tasks: terraform_tasks/get_project.yml

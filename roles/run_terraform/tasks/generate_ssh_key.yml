@@ -1,0 +1,36 @@
+- name: Generate SSH key pair
+  community.crypto.openssh_keypair:
+    path: "/tmp/terraform_ssh_key"
+    type: rsa
+    size: 4096
+    state: present
+    force: true
+  register: ssh_key
+  ignore_errors: no
+
+- name: Read public key content
+  ansible.builtin.slurp:
+    src: "/tmp/terraform_ssh_key.pub"
+  register: public_key_content
+  when: ssh_key is success
+
+- name: Verify public key format
+  ansible.builtin.shell: "ssh-keygen -lf /tmp/terraform_ssh_key.pub"
+  register: key_check
+  when: public_key_content is defined
+  failed_when: key_check.rc != 0
+
+- name: Set public key fact
+  set_fact:
+    terraform_public_key: "{{ public_key_content['content'] | b64decode | trim }}"
+  when: public_key_content is defined and key_check is success
+
+- name: Debug public key
+  debug:
+    var: terraform_public_key
+  when: terraform_public_key is defined
+
+- name: Ensure key name is set
+  set_fact:
+    key_name: "{{ name }}-key"
+  when: name is defined

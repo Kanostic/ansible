@@ -1,0 +1,127 @@
+- name: Assuming role for the current instance
+  ansible.builtin.include_role:
+    name: assume_role
+    tasks_from: assume_role.yml
+  vars:
+    aws_account_id: "{{ current_instance.account }}"
+    aws_region_name: "{{ current_instance.region }}"
+
+- name: Generate SSH key pair
+  ansible.builtin.include_tasks: roles/run_terraform/tasks/generate_ssh_key.yml
+  when: create_key_pair | default(true) | bool
+  vars:
+    name: "{{ current_instance.name }}"
+
+- name: Set deployment start time (UTC now)
+  set_fact:
+    deployment_start_time: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+
+- name: Set public key variable for Terraform
+  set_fact:
+    public_key: "{{ terraform_public_key | default('') }}"
+  when: create_key_pair | default(true) | bool
+
+- name: Set Terraform and AWS variables for current instance
+  set_fact:
+    tf_module_name: "terraform-aws-gn-base-virtual-appliance"
+    jinja_template_name: "terraform-aws-gn-base-virtual-appliance"
+    aws_region: "{{ current_instance.region }}"
+    aws_account_id: "{{ current_instance.account }}"
+    vpc_id: "{{ current_instance.vpc_id }}"
+    instance_type: "{{ current_instance.type }}"
+    name: "{{ current_instance.name }}"
+    key_name: "{{ current_instance.key }}"
+    command_to_run: "{{ current_instance.command }}"
+    enis: "{{ current_instance.enis }}"
+    subnet_id: "{{ current_instance.enis[0].subnet if current_instance.enis | length > 0 else '' }}"
+    ami_id: "{{ current_instance.ami_id }}"
+
+- name: Display current instance details
+  debug:
+    msg: |
+      Processing instance:
+      Region: {{ current_instance.region }}
+      VPC: {{ current_instance.vpc_id }}
+      Instance Type: {{ current_instance.type }}
+      Account ID: {{ current_instance.account }}
+      Name: {{ current_instance.name }}
+
+- name: Validate instance configuration
+  assert:
+    that:
+      - current_instance.region is defined
+      - current_instance.vpc_id is defined
+      - current_instance.type is defined
+      - current_instance.account is defined
+      - current_instance.name is defined
+    fail_msg: "Missing required instance configuration fields"
+    success_msg: "Instance configuration validated successfully"
+
+- name: Process ENIs for instance
+  debug:
+    msg: |
+      ENI Configuration:
+      Subnet: {{ eni.subnet }}
+      EIP Association: {{ eni.eip }}
+      Security Rules:
+        Inbound:
+        {% for rule in eni.inbound %}
+        - {{ rule.protocol }}:{{ rule.from_port }}-{{ rule.to_port }} ({{ rule.description }})
+        {% endfor %}
+  loop: "{{ current_instance.enis }}"
+  loop_control:
+    loop_var: eni
+
+- name: Call the run_terraform role
+  ansible.builtin.include_role:
+    name: run_terraform
+
+- name: Debug new EC2 instances output
+  debug:
+    var: new_ec2_instances.stdout
+  when: new_ec2_instances is defined and new_ec2_instances.stdout is defined
+
+- name: Set fact for new instance ID
+  set_fact:
+    new_instance_id: >-
+      {{
+        (new_ec2_instances.stdout
+          | from_json
+          | flatten(1)
+          | selectattr('InstanceId', 'defined')
+          | map(attribute='InstanceId')
+          | first)
+      }}
+  when:
+    - new_ec2_instances is defined
+    - new_ec2_instances.stdout is defined
+    - (new_ec2_instances.stdout | from_json | flatten(1)) | length > 0
+
+- name: Display new instance ID
+  debug:
+    msg: "New EC2 Instance ID: {{ new_instance_id }}"
+  when: new_instance_id is defined
+
+- name: Include terminate_instance playbook
+  ansible.builtin.include_tasks: roles/run_terraform/tasks/terminate_instance.yml
+  when: new_instance_id is defined and terminate_instance | default(true) | bool
+
+- name: Record processed instance
+  set_fact:
+    processed_instances_log: "{{ processed_instances_log | default([]) + [{
+      'region': current_instance.region,
+      'vpc_id': current_instance.vpc_id,
+      'account': current_instance.account,
+      'name': current_instance.name,
+      'processed_at': ansible_date_time.iso8601 | default('now')
+    }] }}"
+
+- name: Display processing summary
+  debug:
+    msg: |
+      Instance processing summary:
+      Region: {{ current_instance.region }}
+      VPC: {{ current_instance.vpc_id }}
+      Configuration validated: Yes
+      ENIs validated: {{ current_instance.enis | length }}
+      Command validated: Yes

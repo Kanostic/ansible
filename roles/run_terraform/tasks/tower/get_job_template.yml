@@ -1,0 +1,12 @@
+- name: collect template information
+  uri:
+    url: "https://{{ tower_url }}/api/v2/job_templates/?name=create-{{ tf_resource }}-dev"
+    method: GET
+    user: "{{ tower_username }}"
+    password: "{{ tower_password }}"
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+    timeout: 300
+  register: template_results

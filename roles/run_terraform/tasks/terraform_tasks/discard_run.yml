@@ -1,0 +1,21 @@
+# https://developer.hashicorp.com/terraform/cloud-docs/api-docs/run
+
+- name: discard run
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/runs/{{ run_id }}/actions/discard"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    body_format: json
+    body: '{
+      "comment":"This run was discarded."
+    }
+    '
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+      - 202
+    timeout: 300
+  

@@ -1,0 +1,74 @@
+module "base_virtual_appliance" {
+  source  = "app.terraform.io/marriott/terraform-aws-gn-base-virtual-appliance/aws"
+  version = "1.0.7"
+
+  vpc_id        = "{{ vpc_id }}"
+  ami_id        = "{{ ami_id }}"
+  instance_type = "{{ instance_type | default('t2.micro') }}"
+
+  # Handle ENIs with dynamic configuration
+  enis = [
+    {% if enis is defined and enis | length > 0 %}
+    {% for eni in enis %}
+    {
+      subnet_id         = "{{ eni.subnet }}"
+      name              = "{{ eni.name | default(name + '-eni-' + loop.index | string) }}"
+      associate_eip     = {{ eni.eip | default(false) | lower }}
+      private_ips       = {{ eni.private_ips | default([]) | to_json }}
+      source_dest_check = {{ eni.source_dest_check | default(true) | lower }}
+
+      inbound_rules = [
+        {% if eni.inbound is defined and eni.inbound | length > 0 %}
+        {% for rule in eni.inbound %}
+        {
+          protocol          = "{{ rule.protocol }}"
+          from_port        = {{ rule.from_port }}
+          to_port          = {{ rule.to_port }}
+          cidr_blocks      = {{ rule.cidr_blocks | default(['0.0.0.0/0']) | to_json }}
+          prefix_list_ids  = {{ rule.prefix_list_ids | default([]) | to_json }}
+          security_groups  = {{ rule.security_groups | default([]) | to_json }}
+          description      = "{{ rule.description | default('') }}"
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+        {% endif %}
+      ],
+
+      outbound_rules = [
+        {% if eni.outbound is defined and eni.outbound | length > 0 %}
+        {% for rule in eni.outbound %}
+        {
+          protocol          = "{{ rule.protocol }}"
+          from_port        = {{ rule.from_port }}
+          to_port          = {{ rule.to_port }}
+          cidr_blocks      = {{ rule.cidr_blocks | default(['0.0.0.0/0']) | to_json }}
+          prefix_list_ids  = {{ rule.prefix_list_ids | default([]) | to_json }}
+          security_groups  = {{ rule.security_groups | default([]) | to_json }}
+          description      = "{{ rule.description | default('') }}"
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+        {% endif %}
+      ]
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+    {% endif %}
+  ]
+
+  # Key pair configuration
+  create_key_pair = {{ create_key_pair | default(true) | lower }}
+  key_name        = "{{ key_name | default(name + '-key') }}"
+  public_key      = {{ public_key | default('') | to_json }}
+
+  # Tags
+  name          = "{{ name }}"
+  dud           = "{{ dud | default('52529967360') }}"
+  department    = "{{ department | default('cloud network services') }}"
+  environment   = "{{ environment if environment is defined and environment | length > 0 else 'dev' }}"
+  accenture_ru  = "{{ accenture_ru | default('n') }}"
+  owner         = "{{ owner | default('Matt Barczak') }}"
+  domain        = "{{ domain | default('Network') }}"
+  createdby     = "{{ createdby | default('ansible') }}"
+  project       = "{{ project | default('CNS') }}"
+  cloudservice  = "{{ cloudservice | default('no_tier0_ec2') }}"
+  location      = "{{ location | default('aws-' + aws_region) }}"
+  nonGamiEc2    = "{{ nonGamiEc2 | default('') }}"
+}

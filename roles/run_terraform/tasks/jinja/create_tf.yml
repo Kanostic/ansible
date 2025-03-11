@@ -1,0 +1,24 @@
+- name: write {{ jinja_template_name }}.tf file to local disk
+  template:
+    src: "{{ jinja_template_name }}.tf.j2"
+    dest: "/tmp/config_content/{{ jinja_template_name }}.tf"
+    mode: 0777
+  become: true
+  when: not use_empty_tf
+
+- name: write destroy.tf file to local disk
+  template:
+    src: "destroy.tf.j2"
+    dest: "/tmp/config_content/destroy.tf"
+    mode: 0777
+  become: true
+  when: use_empty_tf
+
+- name: Find .tf files
+  ansible.builtin.find:
+    paths: /tmp/config_content/
+    patterns: '*.tf'
+  register: tf_files
+
+- include_tasks: jinja/print_tf.yml
+  with_items: "{{ tf_files.files }}"

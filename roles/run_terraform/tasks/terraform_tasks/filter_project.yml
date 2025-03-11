@@ -1,0 +1,7 @@
+# tfc search results will produce a list of all projects that begin with the same
+# characters as your keyword. This can result in multiple projects being returned.
+# this task will filter out anything that doesn't explicitly match
+
+- set_fact:
+    project_id: "{{ item | json_query('id') }}"
+  when: item | json_query('attributes.name') == "{{ aap_org_name }}"

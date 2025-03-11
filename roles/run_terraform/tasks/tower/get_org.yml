@@ -1,0 +1,19 @@
+- include_tasks: tower/get_job_template.yml
+
+- name: collect org id
+  uri:
+    url: "https://{{ tower_url }}/api/v2/organizations/?id={{ template_results.json.results[0].organization }}"
+    method: GET
+    user: "{{ tower_username }}"
+    password: "{{ tower_password }}"
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+    timeout: 300
+  register: org_result
+  
+
+
+- set_fact:
+    aap_org_name: "{{ org_result.json.results[0].name }}"

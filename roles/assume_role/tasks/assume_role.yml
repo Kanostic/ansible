@@ -1,0 +1,6 @@
+- name: Assume role in account {{ aws_account_id }} region {{ aws_region_name }} role {{ aws_role }}
+  amazon.aws.sts_assume_role:
+    region: "{{ aws_region_name }}"
+    role_arn: "arn:aws:iam::{{ aws_account_id }}:role/{{ aws_role }}"
+    role_session_name: "AAP_{{ aws_account_id }}_{{ aws_role }}_session"
+  register: assumed_role

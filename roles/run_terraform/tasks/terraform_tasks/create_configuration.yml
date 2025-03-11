@@ -1,0 +1,32 @@
+- name: create config version
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/workspaces/{{ tfc_workspace_name }}/configuration-versions"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    body_format: json
+    body: '
+      {
+        "data": {
+          "type": "configuration-versions",
+          "attributes": {
+            "auto-queue-runs": {{ tfc_api_run_module_auto_queue_runs }},
+            "speculative": {{ tfc_api_run_module_speculative | string | lower }}
+          }
+        }
+      }'
+    force_basic_auth: yes
+    validate_certs: no
+    status_code:
+      - 201
+    timeout: 300
+  register: createconfig_result
+
+
+- set_fact:
+    hyphen_removed: "{{ createconfig_result | string | replace('upload-url','upload_url') }}"
+
+- set_fact:
+    upload_url: "{{ hyphen_removed.json.data.attributes.upload_url }}"
+    configver_id: "{{ createconfig_result.json.data.id }}"

@@ -1,0 +1,27 @@
+- name: collect workspace info
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/organizations/{{ tfc_organization_name }}/workspaces?search%5Bname%5D={{ tfc_workspace_name }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+    timeout: 300
+  register: api_result
+
+- name: Check if workspace data is available
+  set_fact:
+    workspace_data_available: "{{ api_result.json.data | length > 0 }}"
+
+- name: Set workspace ID
+  set_fact:
+    tfc_workspace_name: "{{ api_result.json.data | selectattr('attributes.name', 'equalto', tfc_workspace_name) | map(attribute='id') | first }}"
+  when: workspace_data_available
+
+- name: Print workspace ID
+  debug:
+    msg: "Workspace ID: {{ tfc_workspace_name }}"
+  when: tfc_workspace_name is defined

@@ -1,0 +1,14 @@
+provider "aws" {
+  region = "{{ aws_region }}"
+  assume_role {
+    role_arn = "arn:aws:iam::{{ aws_account_id }}:role/{{ tfc_aws_role }}"
+  }
+}
+
+terraform {
+  required_version = ">= 0.13.1"
+
+  required_providers {
+    aws = ">= 5.40.0"
+  }
+}

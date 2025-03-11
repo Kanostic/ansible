@@ -1,0 +1,8 @@
+collections:
+  - name: community.aws
+  - name: amazon.aws
+  - name: community.general
+  - name: awx.awx
+  # - name: mi_custom.hashicorp_vault
+  - name: ansible.utils
+  - name: community.crypto

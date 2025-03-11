@@ -1,0 +1,74 @@
+---
+- name: Assume role for current account
+  ansible.builtin.include_role:
+    name: assume_role
+    tasks_from: assume_role.yml
+  vars:
+    aws_account_id: "{{ current_account }}"
+    aws_region_name: "{{ current_region }}"
+
+- name: Collect all AWS resources information
+  block:
+    - name: List all VPCs
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ current_region }}"
+      environment: "{{ aws_credentials }}"
+      register: vpcs_info
+
+    - name: List all subnets
+      amazon.aws.ec2_vpc_subnet_info:
+        region: "{{ current_region }}"
+        filters:
+          vpc-id: "{{ item.vpc_id }}"
+      environment: "{{ aws_credentials }}"
+      loop: "{{ vpcs_info.vpcs }}"
+      register: subnets_info
+
+    - name: List all route tables
+      amazon.aws.ec2_vpc_route_table_info:
+        region: "{{ current_region }}"
+        filters:
+          vpc-id: "{{ item.vpc_id }}"
+      environment: "{{ aws_credentials }}"
+      loop: "{{ vpcs_info.vpcs }}"
+      register: route_tables_info
+
+    - name: List all security groups
+      amazon.aws.ec2_security_group_info:
+        region: "{{ current_region }}"
+        filters:
+          vpc-id: "{{ item.vpc_id }}"
+      environment: "{{ aws_credentials }}"
+      loop: "{{ vpcs_info.vpcs }}"
+      register: security_groups_info
+
+    - name: List all Transit Gateways
+      amazon.aws.ec2_transit_gateway_info:
+        region: "{{ current_region }}"
+      environment: "{{ aws_credentials }}"
+      register: transit_gateways_info
+
+    - name: List Transit Gateway attachments
+      amazon.aws.ec2_transit_gateway_vpc_attachment_info:
+        region: "{{ current_region }}"
+        filters:
+          transit-gateway-id: "{{ item.transit_gateway_id }}"
+      environment: "{{ aws_credentials }}"
+      loop: "{{ transit_gateways_info.transit_gateways }}"
+      register: tgw_attachments_info
+
+    - name: Generate report for current account/region
+      template:
+        src: aws_resources.j2
+        dest: "/tmp/aws_resources_report_{{ current_account }}_{{ current_region }}.txt"
+      delegate_to: localhost
+
+    - name: Display AWS resources report
+      debug:
+        msg: "{{ lookup('file', '/tmp/aws_resources_report_' + current_account + '_' + current_region + '.txt') | split('\n') }}"
+
+  vars:
+    aws_credentials:
+      AWS_ACCESS_KEY_ID: "{{ assumed_role.sts_creds.access_key }}"
+      AWS_SECRET_ACCESS_KEY: "{{ assumed_role.sts_creds.secret_key }}"
+      AWS_SESSION_TOKEN: "{{ assumed_role.sts_creds.session_token }}"

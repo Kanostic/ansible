@@ -1,0 +1,35 @@
+═══════════════════════════════════════════════════════════════════════════
+📊 EC2 Deployment Summary
+═══════════════════════════════════════════════════════════════════════════
+🕒 Generated: {{ summary_data.deployment_time }}
+
+{% for instance in summary_data.instances %}
+───────────────────────────────────────────────────────────────────────────
+🖥️  Instance Details
+Instance ID : {{ instance.instance_id }}
+Name        : {{ instance.name }}
+State       : {{ instance.state }}
+Type        : {{ instance.type }}
+Private IP  : {{ instance.private_ip }}
+Public IP   : {{ instance.public_ip }}
+Region      : {{ instance.region }}
+Account     : {{ instance.account }}
+
+{% for result in summary_data.ssh_results if result.instance_ip == instance.public_ip %}
+🔑 SSH Command Results:
+Status: {{ '✅ Success' if result.status == 0 else '❌ Failed' }}
+
+Output:
+{% if result.output | length > 0 %}
+{{ result.output }}
+{% else %}
+    No output available
+{% endif %}
+
+{% if result.errors | length > 0 %}
+Errors:
+{{ result.errors }}
+{% endif %}
+{% endfor %}
+{% endfor %}
+═══════════════════════════════════════════════════════════════════════════
