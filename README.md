@@ -86,7 +86,7 @@ def run(self, terms, variables=None, **kwargs):
 
 ```hcl
 module "base_virtual_appliance" {
-  source  = "app.terraform.io/marriott/terraform-aws-gn-base-virtual-appliance/aws"
+  source  = "app.terraform.io//terraform-aws-gn-base-virtual-appliance/aws"
   version = "1.0.0"
 
   vpc_id        = "vpc-xxxxx"
