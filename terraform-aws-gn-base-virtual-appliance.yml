@@ -1,0 +1,12 @@
+- name: Process and deploy instances
+  connection: local
+  hosts: localhost
+  gather_facts: no
+  ignore_errors: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python
+
+  tasks:
+    - name: Process each instance with corresponding AWS account
+      include_tasks: roles/run_terraform/tasks/process_instance.yml

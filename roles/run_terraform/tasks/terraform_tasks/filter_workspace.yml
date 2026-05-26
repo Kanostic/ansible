@@ -1,0 +1,7 @@
+# tfc search results will produce a list of all workspaces that begin with the same
+# characters as your keyword. This can result in multiple workspaces being returned.
+# this task will filter out anything that doesn't explicitly match
+
+- set_fact:
+    tfc_workspace_name: "{{ item | json_query('id') }}"
+  when: item | json_query('attributes.name') == "{{ tfc_workspace_name }}"

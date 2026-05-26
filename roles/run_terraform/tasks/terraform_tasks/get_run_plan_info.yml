@@ -1,0 +1,46 @@
+- name: collect workspace run info
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/runs/{{ getrun_result.json.data[0].id }}/plan"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+    timeout: 300
+  register: get_run_plan_info
+
+
+- set_fact:
+    get_run_plan_info: "{{ get_run_plan_info | replace('-','_') }}"
+
+- name: Download run log
+  ansible.builtin.get_url:
+    url: "{{ get_run_plan_info.json.data.attributes.log_read_url }}"
+    dest: "/tmp/{{ run_id }}"
+
+- name: Terraform Cloud Plan Log
+  set_fact:
+    plan_log: "{{ lookup('file', '/tmp/' + run_id) }}"
+
+- name: Parse plan errors if plan failed
+  block:
+    - name: Extract plan error messages
+      set_fact:
+        plan_error_lines: "{{ plan_log | regex_replace('\\x02', '') | regex_replace('\\x03', '') | split('\n') | select('match', '.*\"@level\":\"error\".*') | list }}"
+
+    - name: Display plan errors
+      debug:
+        msg: |
+          Plan Error Found:
+          {% for line in plan_error_lines %}
+          {% set error_json = line | from_json %}
+          {% if error_json.diagnostic is defined %}
+          - {{ error_json.diagnostic.summary }}
+          {% endif %}
+          {% endfor %}
+      when: plan_error_lines | length > 0
+  when: "'error' in plan_log"
+  ignore_errors: yes

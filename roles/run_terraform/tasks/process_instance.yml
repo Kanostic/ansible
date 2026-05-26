@@ -1,0 +1,61 @@
+- name: Assuming role for the current instance
+  amazon.aws.sts_assume_role:
+    region: "{{ item.aws_region }}"
+    role_arn: "arn:aws:iam::{{ item.aws_account_id }}:role/{{ aws_role | default('mi-ansible-aap') }}"
+    role_session_name: "AAP_{{ item.aws_account_id }}_{{ aws_role | default('mi-ansible-aap') }}_session"
+  register: assumed_roles
+  loop: "{{ instances }}"
+  ignore_errors: true
+  when: tfc_state | default('apply') != 'destroy'
+
+- name: Set deployment start time (UTC now)
+  set_fact:
+    deployment_start_time: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+
+- name: Set key name
+  set_fact:
+    key_name: "ec2-key"
+
+- name: Set app subnet when ENIs not specified
+  ansible.builtin.include_tasks: roles/run_terraform/tasks/set_app_subnet.yml
+  vars:
+    ansible_aws_role: "mi-ansible-aap"
+    instances: "{{ [instance] }}"  # Pass as list for compatibility
+  when: tfc_state | default('apply') != 'destroy'
+
+- name: Display instances with subnet
+  debug:
+    msg: "{{ instances_with_subnet | default([]) }}"
+  when: tfc_state | default('apply') != 'destroy'
+
+- name: Create default ENI configuration with app subnet
+  set_fact:
+    default_enis:
+      - subnet: ""
+        associate_eip: false
+        name: ""
+        source_dest_check: true
+        inbound:
+          - protocol: "tcp"
+            from_port: 22
+            to_port: 22
+            cidr_blocks: ["0.0.0.0/8"]
+            description: "SSH access"
+        outbound:
+          - protocol: "-1"
+            from_port: 0
+            to_port: 0
+            cidr_blocks: ["0.0.0.0/0"]
+            description: "Allow all outbound traffic"
+  when: tfc_state | default('apply') != 'destroy'
+
+- name: Set Terraform and AWS variables for current instance
+  set_fact:
+    tf_module_name: "terraform-aws-gn-base-virtual-appliance"
+    jinja_template_name: "terraform-aws-gn-base-virtual-appliance"
+    enis: "{{ default_enis | default([]) }}"  # Use default_enis if created, otherwise use provided
+  when: tfc_state | default('apply') != 'destroy'
+
+- name: Call the run_terraform role
+  ansible.builtin.include_role:
+    name: run_terraform

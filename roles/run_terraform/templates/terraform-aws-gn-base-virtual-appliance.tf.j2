@@ -1,0 +1,424 @@
+{# Default S3 params for upload role; can be overridden by Ansible vars of same name #}
+{% set s3_bucket_name = s3_bucket_name | default('mi-cns-orgshared-bucket-38asdh2') %}
+{% set s3_bucket_prefix = s3_bucket_prefix | default('connectivity_results/') %}
+
+{# Validate environment to one of dev, test, stg, perf, prod for tagging policies #}
+{% set _valid_env_values = ['dev', 'test', 'stg', 'perf', 'prod'] %}
+{% set _env_val = environment|default('dev')|lower %}
+{% if _env_val not in _valid_env_values %}
+  {% set _env_val = 'dev' %}
+{% endif %}
+
+# ============================================================================
+# SHARED SSH KEY RESOURCES (created once, used by all instances)
+# This prevents SSH key regeneration when targeting individual instances
+# ============================================================================
+
+{% set use_existing_key = existing_key_name | default('') != '' %}
+{% if not use_existing_key %}
+# Generate a single shared SSH key for all instances in this deployment
+resource "tls_private_key" "shared" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+
+  # Prevent recreation - lifecycle settings ensure the key persists
+  lifecycle {
+    prevent_destroy = false
+    ignore_changes  = all
+  }
+}
+
+# Create ONE key pair per unique region (handles multiple instances in same region)
+# Build a list of unique regions with their first instance's provider alias
+{% set unique_regions = {} %}
+{% for i in instances_with_subnet %}
+{% set region = i.aws_region %}
+{% if region not in unique_regions %}
+{% set _ = unique_regions.update({region: 'ec2-' + loop.index | string}) %}
+{% endif %}
+{% endfor %}
+
+{% for region, provider_alias in unique_regions.items() %}
+resource "aws_key_pair" "shared_{{ region | replace('-', '_') }}" {
+  provider   = aws.{{ provider_alias }}
+  key_name   = "{{ key_name | default('ec2-key') }}"
+  public_key = tls_private_key.shared.public_key_openssh
+
+  lifecycle {
+    ignore_changes = [public_key]
+  }
+
+  tags = {
+    Name        = "{{ key_name | default('ec2-key') }}"
+    environment = "{{ _env_val }}"
+    project     = "{{ project | default('cns-self-service-automation') }}"
+    createdby   = "{{ tower_user_name | default('ansible') }}"
+  }
+}
+{% endfor %}
+
+# Output the private key (only shown on first creation)
+output "shared_private_key_pem" {
+  description = "The shared private key in PEM format. SAVE THIS - it won't be shown again!"
+  value       = tls_private_key.shared.private_key_pem
+  sensitive   = true
+}
+
+output "shared_public_key_openssh" {
+  description = "The shared public key in OpenSSH format"
+  value       = tls_private_key.shared.public_key_openssh
+}
+{% endif %}
+
+# ============================================================================
+# PER-INSTANCE RESOURCES
+# ============================================================================
+
+{% for i in instances_with_subnet %}
+{% set name = 'ec2-' + loop.index | string %}
+{% set res_name = name | replace('-', '_') %}
+
+# IAM role and instance profile for S3 uploads
+resource "aws_iam_role" "{{ res_name }}_s3_upload" {
+  provider = aws.{{ name }}
+  name = "{{ name }}-s3-upload-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = { Service = "ec2.amazonaws.com" },
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    name        = "{{ name }}-s3-upload-role"
+    environment = "{{ _env_val }}"
+    project     = "{{ project | default('cns-self-service-automation') }}"
+  }
+}
+
+data "aws_iam_policy_document" "{{ res_name }}_s3_write" {
+  provider = aws.{{ name }}
+  statement {
+    sid     = "PutObjects"
+    effect  = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:PutObjectAcl",
+      "s3:AbortMultipartUpload",
+      "s3:ListBucketMultipartUploads",
+      "s3:ListMultipartUploadParts"
+    ]
+    resources = ["arn:aws:s3:::{{ s3_bucket_name }}/{{ s3_bucket_prefix | trim('/') }}*"]
+    condition {
+      test     = "StringEqualsIfExists"
+      variable = "s3:x-amz-server-side-encryption"
+      values   = ["aws:kms", "AES256"]
+    }
+  }
+
+  statement {
+    sid     = "ListBucketPrefix"
+    effect  = "Allow"
+    actions = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::{{ s3_bucket_name }}"]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["{{ s3_bucket_prefix | trim('/') }}*"]
+    }
+  }
+}
+
+resource "aws_iam_policy" "{{ res_name }}_s3_write" {
+  provider    = aws.{{ name }}
+  name        = "{{ name }}-s3-upload-policy"
+  description = "Allow instance to upload connectivity results to S3"
+  policy      = data.aws_iam_policy_document.{{ res_name }}_s3_write.json
+  tags = {
+    name        = "{{ name }}-s3-upload-policy"
+    environment = "{{ _env_val }}"
+    project     = "{{ project | default('cns-self-service-automation') }}"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "{{ res_name }}_attach" {
+  provider  = aws.{{ name }}
+  role       = aws_iam_role.{{ res_name }}_s3_upload.name
+  policy_arn = aws_iam_policy.{{ res_name }}_s3_write.arn
+}
+
+# IAM policy for AL2023 repository access (all Amazon Linux repos)
+data "aws_iam_policy_document" "{{ res_name }}_al2023_repos" {
+  provider = aws.{{ name }}
+  statement {
+    sid     = "AL2023RepoAccess"
+    effect  = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:GetObjectVersion",
+      "s3:ListBucket",
+      "s3:GetBucketLocation"
+    ]
+    resources = [
+      "arn:aws:s3:::al2023-repos-*",
+      "arn:aws:s3:::al2023-repos-*/*",
+      "arn:aws:s3:::amazonlinux-*",
+      "arn:aws:s3:::amazonlinux-*/*",
+      "arn:aws:s3:::amazon-linux-*",
+      "arn:aws:s3:::amazon-linux-*/*"
+    ]
+  }
+}
+
+resource "aws_iam_policy" "{{ res_name }}_al2023_repos" {
+  provider    = aws.{{ name }}
+  name        = "{{ name }}-al2023-repos-policy"
+  description = "Allow instance to access Amazon Linux 2023 repositories"
+  policy      = data.aws_iam_policy_document.{{ res_name }}_al2023_repos.json
+  tags = {
+    name        = "{{ name }}-al2023-repos-policy"
+    environment = "{{ _env_val }}"
+    project     = "{{ project | default('cns-self-service-automation') }}"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "{{ res_name }}_al2023_attach" {
+  provider  = aws.{{ name }}
+  role       = aws_iam_role.{{ res_name }}_s3_upload.name
+  policy_arn = aws_iam_policy.{{ res_name }}_al2023_repos.arn
+}
+
+resource "aws_iam_instance_profile" "{{ res_name }}_s3_upload" {
+  provider = aws.{{ name }}
+  name = "{{ name }}-s3-upload-profile"
+  role = aws_iam_role.{{ res_name }}_s3_upload.name
+  tags = {
+    name        = "{{ name }}-s3-upload-profile"
+    environment = "{{ _env_val }}"
+    project     = "{{ project | default('cns-self-service-automation') }}"
+  }
+}
+module "{{ name }}" {
+  source  = "app.terraform.io/marriott/terraform-aws-gn-base-virtual-appliance/aws"
+  version = "1.0.14"
+  providers = { aws = aws.{{ name }} }
+
+  vpc_id           = "{{ i.vpc_id }}"
+  {% if ami_id is defined and ami_id != '' %}
+  ami_id           = "{{ ami_id }}"
+  {% else %}
+  # AMI auto-selected based on region
+  ami_id           = "{{ region_ami_mapping[i.aws_region] }}"
+  {% endif %}
+  instance_type    = "{{ instance_type | default('t3.micro', true) }}"
+  root_volume_size = {{ root_volume_size | default(150, true) }}
+
+  # Attach IAM instance profile for S3 upload
+  iam_instance_profile = aws_iam_instance_profile.{{ res_name }}_s3_upload.name
+
+  # Add user_data parameter (prefer per-instance, fall back to top-level variable)
+  {% set _ud = (i.user_data if i.user_data is defined and i.user_data|trim != '' else (user_data if user_data is defined else '')) %}
+  {% if _ud|trim != '' %}
+  user_data = <<-EOF
+{{ _ud | replace('{{vpc_id}}', i.vpc_id) }}
+EOF
+  {% endif %}
+
+  # Handle ENIs with dynamic configuration
+  # Use per-instance associate_eip if defined, otherwise fall back to ENI config or false
+  {% set instance_associate_eip = i.associate_eip | default(false) %}
+  enis = [
+    {% if enis is defined and enis | length > 0 %}
+    {% for eni in enis %}
+    {
+      subnet_id         = "{{ i.subnet_id }}"
+      name              = "{{ name }}-eni-{{ loop.index }}"
+      associate_eip     = {{ instance_associate_eip | default(eni.associate_eip | default(false)) | lower }}
+      source_dest_check = {{ eni.source_dest_check | default(true) | lower }}
+
+      inbound_rules = [
+        {
+          protocol     = "tcp"
+          from_port    = 22
+          to_port      = 22
+          cidr_blocks  = ["0.0.0.0/8"]
+          description  = "SSH access"
+        }
+      ]
+
+      outbound_rules = [
+        {% if eni.outbound is defined and eni.outbound | length > 0 %}
+        {% for rule in eni.outbound %}
+        {
+          protocol     = "{{ rule.protocol | default('-1') }}"
+          from_port    = {{ rule.from_port | default(0) }}
+          to_port      = {{ rule.to_port | default(0) }}
+          cidr_blocks  = {{ rule.cidr_blocks | default(["0.0.0.0/0"]) | to_json }}
+          description  = "{{ rule.description | default('Allow all outbound traffic') }}"
+          prefix_list_ids = {{ rule.prefix_list_ids | default([]) | to_json }}
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+        {% else %}
+        {
+          from_port    = 0
+          to_port      = 0
+          cidr_blocks  = ["0.0.0.0/0"]
+          description  = "Allow all outbound traffic"
+        }
+        {% endif %}
+      ]
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+    {% endif %}
+  ]
+
+  # Key pair configuration
+  # Uses shared key resources created at the top of this file to prevent key regeneration
+  # when targeting individual instances for redeployment
+  {% set instance_existing_key = i.existing_key_name | default(existing_key_name | default('')) %}
+  create_key_pair = false  # Key pair managed outside module to prevent regeneration
+
+  {% if instance_existing_key != '' %}
+  # Use existing key specified by user
+  key_name = "{{ instance_existing_key }}"
+  {% else %}
+  # Use shared key pair for this region (supports multiple instances per region)
+  key_name = aws_key_pair.shared_{{ i.aws_region | replace('-', '_') }}.key_name
+  {% endif %}
+
+  # Define metadata options
+  metadata_http_tokens   = "required"
+  metadata_http_endpoint = "enabled"
+
+  # First, ensure we have a valid environment value (dev, test, stg, perf, prod)
+  {% set valid_env_values = ['dev', 'test', 'stg', 'perf', 'prod'] %}
+  {% set env_value = environment|default('dev')|lower %}
+  {% if env_value not in valid_env_values %}
+    {% set env_value = 'dev' %}
+  {% endif %}
+
+    # Tags as a map
+  tags = {
+    "Name"          = "{{ name }}"
+    "dud"           = "{{ dud | default('52529967360', true) }}"
+    "department"    = "{{ department | default('cloud network services') }}"
+    "environment"   = "{{ env_value }}"
+    "accenture_ru"  = "{{ accenture_ru | default('n') }}"
+    "owner"         = "{{ owner | default('Matthew Barczak') }}"
+    "domain"        = "{{ domain | default('Network') }}"
+    "createdby"     = "{{ tower_user_name | default('ansible') }}"
+    "project"       = "{{ project | default('cns-self-service-automation') }}"
+    "cloudservice"  = "{{ cloudservice | default('no_tier0_ec2') }}"
+    "location"      = "aws-{{ i.aws_region | replace('-', '') }}"
+    "nonGamiEc2"    = "{{ nonGamiEc2 | default('false') }}"
+  }
+
+  # Individual parameters
+  name          = "{{ name | default('ec2-instance') }}"
+  dud           = "{{ dud | default('52529967360', true) }}"
+  department    = "{{ department | default('cloud network services') }}"
+  environment   = "{{ env_value }}"
+  accenture_ru  = "{{ accenture_ru | default('n') }}"
+  owner         = "{{ owner | default('Matthew Barczak') }}"
+  domain        = "{{ domain | default('Network') }}"
+  createdby     = "{{ tower_user_name | default('ansible') }}"
+  project       = "{{ project | default('cns-self-service-automation') }}"
+  cloudservice  = "{{ cloudservice | default('no_tier0_ec2') }}"
+  location      = "aws-{{ i.aws_region | replace('-', '') }}"
+  nonGamiEc2    = "{{ nonGamiEc2 | default('false') }}"
+}
+{% endfor %}
+
+# Add optional variable declarations to silence "Value for undeclared variable" warnings
+variable "AAP_HOSTNAME" {
+  type    = string
+  default = ""
+}
+
+variable "AAP_PUBLIC_KEY" {
+  type    = string
+  default = ""
+}
+
+variable "AAP_TOKEN" {
+  type    = string
+  default = ""
+}
+
+variable "ANSIBLE_PUBLIC_KEY" {
+  type    = string
+  default = ""
+}
+
+variable "JOB_TEMPLATE_ID" {
+  type    = string
+  default = ""
+}
+
+variable "command_to_run" {
+  type    = string
+  default = ""
+}
+
+variable "user_data" {
+  type    = string
+  default = ""
+}
+
+# Additional variables to silence TFC warnings
+variable "AUTH_TOKEN" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Authentication token"
+}
+
+variable "tower_user_name" {
+  type        = string
+  default     = "ansible"
+  description = "Tower/AAP username"
+}
+
+variable "project_name" {
+  type        = string
+  default     = ""
+  description = "Project name"
+}
+
+variable "workspace_name" {
+  type        = string
+  default     = ""
+  description = "Workspace name"
+}
+
+variable "deployment_start_time" {
+  type        = string
+  default     = ""
+  description = "Deployment start timestamp"
+}
+
+variable "terraform_targets" {
+  type        = list(string)
+  default     = []
+  description = "Terraform targets for selective apply/destroy"
+}
+
+variable "existing_key_name" {
+  type        = string
+  default     = ""
+  description = "Name of existing EC2 key pair to use instead of creating a new one"
+}
+
+variable "create_key_pair" {
+  type        = bool
+  default     = true
+  description = "Whether to create a new key pair (ignored if existing_key_name is provided)"
+}
+
+variable "tfc_state" {
+  type        = string
+  default     = "apply"
+  description = "Terraform Cloud state action (apply, destroy, plan)"
+}

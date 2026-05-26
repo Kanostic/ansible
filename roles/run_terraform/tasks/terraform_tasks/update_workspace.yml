@@ -1,0 +1,39 @@
+- name: update workspace
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/workspaces/{{ tfc_workspace_name }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    body_format: json
+    body: '{
+      "data": {
+        "attributes": {
+          "execution-mode": "agent",
+          "auto-apply": {{ tfc_api_run_module_auto_apply }},
+          "allow-destroy-plan": {{ tfc_api_run_module_allow_destroy_plan }},
+          "agent-pool-id": "{{ agentpool_id }}",
+          "execution-mode": "agent"
+        },
+        "relationships": {
+          "project": {
+            "data": {
+              "type": "projects",
+              "id": "{{ project_id }}"
+            }
+          }
+        },
+        "type": "workspaces"
+      }
+    }'
+    force_basic_auth: yes
+    validate_certs: no
+    status_code:
+      - 200
+      - 201
+      - 202
+      - 203
+      - 204
+      - 205
+    timeout: 300
+  register: api_result

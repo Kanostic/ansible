@@ -1,0 +1,19 @@
+- name: collect agent pool info
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/organizations/{{ tfc_organization_name }}/agent-pools?q={{ provider }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+    timeout: 300
+  register: pool_result
+  
+
+- set_fact:
+    agentpool_id: "{{ pool_result.json.data[0].id }}"
+
+  

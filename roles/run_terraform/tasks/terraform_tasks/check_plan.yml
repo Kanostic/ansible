@@ -1,0 +1,34 @@
+- name: get plan
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/plans/{{ getrun_result.json.data[0].relationships.plan.data.id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    force_basic_auth: yes
+    validate_certs: no
+    status_code:
+      - 200
+    timeout: 300
+  register: plan_result
+  
+
+- set_fact:
+    plan: "{{ plan_result | string | replace('-','_') | to_json | from_json }}"
+
+- set_fact:
+    destroy_count: "{{ plan.json.data.attributes.resource_destructions | default('0') }}"
+
+- name: apply run, no resource destructions found in plan
+  include_tasks: terraform_tasks/apply_run.yml
+  when: destroy_count == "0" or tfc_allow_destroy
+
+- block:
+    - include_tasks: terraform_tasks/discard_run.yml
+
+    - name: terminate if destroy found in plan
+      ansible.builtin.fail:
+        msg: The Terraform run plan included a destroy. Terminating ansible job.
+      no_log: false   
+  when: tfc_state == "apply" and destroy_count != "0" and not tfc_allow_destroy
+  

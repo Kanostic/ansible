@@ -1,0 +1,31 @@
+- name: Lookup all subnets in VPC
+  amazon.aws.ec2_vpc_subnet_info:
+    region: "{{ item.0.aws_region }}"
+    filters:
+      vpc-id: "{{ item.0.vpc_id }}"
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ item.1.sts_creds.access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ item.1.sts_creds.secret_key }}"
+    AWS_SESSION_TOKEN: "{{ item.1.sts_creds.session_token }}"
+    AWS_DEFAULT_REGION: "{{ item.0.aws_region }}"
+  loop: "{{ instances | zip(assumed_roles.results) | list }}"
+  register: subnet_results
+  ignore_errors: true
+
+- name: Filter subnets whose Name tag contains "app" (preserve existing subnet_id if defined)
+  set_fact:
+    instances_with_subnet: "{{ instances_with_subnet | default([]) + [item.0 | combine({'subnet_id': final_subnet_id})] }}"
+  vars:
+    # Use instance's subnet_id if already defined, otherwise lookup from VPC subnets with 'app' in name
+    existing_subnet: "{{ item.0.subnet_id | default('') }}"
+    looked_up_subnet: "{{ (item.1.subnets | selectattr('tags.Name', 'search', 'app') | map(attribute='subnet_id') | first | default('')) if (item.1 is defined and not item.1.failed | default(false)) else '' }}"
+    final_subnet_id: "{{ existing_subnet if existing_subnet != '' else looked_up_subnet }}"
+  loop: "{{ instances | zip(subnet_results.results) | list }}"
+
+- name: Debug instances missing app subnet
+  debug:
+    msg: "Missing app subnet for instance: aws_account_id={{ item.aws_account_id }}, aws_region={{ item.aws_region }}, vpc_id={{ item.vpc_id }}"
+  loop: "{{ instances_with_subnet | default([]) }}"
+  loop_control:
+    label: "{{ item.aws_account_id }}:{{ item.aws_region }}"
+  when: item.subnet_id is not defined or item.subnet_id == ""

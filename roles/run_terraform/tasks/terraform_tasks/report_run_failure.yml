@@ -1,0 +1,71 @@
+---
+- name: Parse Terraform JSON logs
+  set_fact:
+    log_lines: "{{ apply_log | default('') | regex_replace('\\x02', '') | regex_replace('\\x03', '') | split('\n') | select | list }}"
+
+- name: Extract error messages from JSON logs
+  set_fact:
+    error_messages: []
+    warning_messages: []
+
+- name: Process each log line
+  set_fact:
+    error_messages: "{{ error_messages + [item | from_json | json_query('diagnostic.summary')] }}"
+  when:
+    - item is match('.*"@level":"error".*')
+    - item | from_json | json_query('diagnostic.summary') is not none
+  loop: "{{ log_lines }}"
+  ignore_errors: yes
+
+- name: Process warning messages
+  set_fact:
+    warning_messages: "{{ warning_messages + [item | from_json | json_query('diagnostic.summary')] }}"
+  when:
+    - item is match('.*"@level":"warn".*')
+    - item | from_json | json_query('diagnostic.summary') is not none
+  loop: "{{ log_lines }}"
+  ignore_errors: yes
+
+- name: Extract simple error from last line if no JSON errors found
+  set_fact:
+    error_messages: "{{ error_messages + [log_lines[-1] | regex_replace('Operation failed: ', '')] }}"
+  when:
+    - error_messages | length == 0
+    - log_lines | length > 0
+    - "'Operation failed:' in log_lines[-1]"
+
+- name: Display Terraform execution summary
+  debug:
+    msg: |
+      ================== TERRAFORM EXECUTION FAILED ==================
+
+      Workspace: {{ workspace_name | default('Unknown') }}
+      Run ID: {{ run_id }}
+      Status: {{ workspace_status }}
+
+      {% if error_messages | length > 0 %}
+      ERRORS:
+      {% for error in error_messages | unique %}
+      - {{ error }}
+      {% endfor %}
+      {% endif %}
+
+      {% if warning_messages | length > 0 %}
+      WARNINGS:
+      {% for warning in warning_messages | unique %}
+      - {{ warning }}
+      {% endfor %}
+      {% endif %}
+
+      ================================================================
+
+- name: Fail with specific error message
+  fail:
+    msg: |
+      Terraform execution failed!
+      {% if error_messages | length > 0 %}
+      Error: {{ error_messages | unique | join(' | ') }}
+      {% else %}
+      Status: {{ workspace_status }}
+      Check Terraform Cloud UI for more details: https://app.terraform.io/app/{{ aap_org_name | default('your-org') }}/workspaces/{{ workspace_name | default('workspace') }}/runs/{{ run_id }}
+      {% endif %}

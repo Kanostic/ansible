@@ -1,0 +1,18 @@
+{% for i in instances %}
+{% set name = 'ec2-' + loop.index | string %}
+provider "aws" {
+  region = "{{ i.aws_region }}"
+  alias  = "{{ name }}"
+  assume_role {
+    role_arn = "arn:aws:iam::{{ i.aws_account_id }}:role/{{ tfc_aws_role }}"
+  }
+}
+{% endfor %}
+
+terraform {
+  required_version = ">= 0.13.1"
+
+  required_providers {
+    aws = ">= 5.40.0"
+  }
+}

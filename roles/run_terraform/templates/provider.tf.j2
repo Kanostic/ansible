@@ -1,0 +1,31 @@
+{# Validate environment to one of dev, test, stg, perf, prod for tagging policies #}
+{% set _valid_env_values = ['dev', 'test', 'stg', 'perf', 'prod'] %}
+{% set _env_val = environment|default('dev')|lower %}
+{% if _env_val not in _valid_env_values %}
+  {% set _env_val = 'dev' %}
+{% endif %}
+
+{% for i in instances %}
+{% set name = 'ec2-' + loop.index | string %}
+provider "aws" {
+  region = "{{ i.aws_region }}"
+  alias = "{{ name }}"
+  assume_role {
+    role_arn = "arn:aws:iam::{{ i.aws_account_id }}:role/{{ tfc_aws_role }}"
+  }
+
+  default_tags {
+    tags = {
+      environment = "{{ _env_val }}"
+    }
+  }
+}
+{% endfor %}
+
+terraform {
+  required_version = ">= 0.13.1"
+
+  required_providers {
+    aws = ">= 5.40.0"
+  }
+}

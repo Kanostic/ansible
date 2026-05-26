@@ -1,0 +1,39 @@
+- name: create run
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/runs"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    body_format: json
+    body: |
+      {
+        "data": {
+          "attributes": {
+            "message": "mind aap test"{% if terraform_targets | default([]) | length > 0 %},
+            "target-addrs": {{ terraform_targets | to_json }}{% endif %}
+          },
+          "type":"runs",
+          "relationships": {
+            "workspace": {
+              "data": {
+                "type": "workspaces",
+                "id": "{{ tfc_workspace_name }}"
+              }
+            },
+            "configuration-version": {
+              "data": {
+                "type": "configuration-versions",
+                "id": "{{ configver_id }}"
+              }
+            }
+          }
+        }
+      }
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+      - 201
+      - 202
+    timeout: 300

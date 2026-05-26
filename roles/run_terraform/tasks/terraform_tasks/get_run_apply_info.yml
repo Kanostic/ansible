@@ -1,0 +1,112 @@
+- name: collect workspace run info
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/runs/{{ getrun_result.json.data[0].id }}/apply"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+    timeout: 300
+  register: get_run_apply_info
+
+- set_fact:
+    get_run_apply_info: "{{ get_run_apply_info | replace('-','_') }}"
+
+- name: Download run log
+  ansible.builtin.get_url:
+    url: "{{ get_run_apply_info.json.data.attributes.log_read_url }}"
+    dest: "/tmp/{{ run_id }}"
+
+- name: Terraform Cloud Apply Log
+  set_fact:
+    apply_log: "{{ item }}"
+  with_file:
+    - "/tmp/{{ run_id }}"
+
+- name: Extract EC2 instance IDs from Terraform logs (improved regex)
+  set_fact:
+    ec2_instance_ids: "{{ lookup('ansible.builtin.file', '/tmp/' + run_id) | \
+      regex_findall('module\\.ec2-(\\d+)\\.aws_instance\\.main.*(?:Creation complete|Apply complete).*id=(i-[a-f0-9]+)') }}"
+
+- name: Debug raw Terraform log for instance creation
+  debug:
+    msg:
+      - "Raw matches: {{ lookup('ansible.builtin.file', '/tmp/' + run_id) | regex_findall('module\\.ec2-\\d+.*instance.*(?:Creation|Apply).*complete.*id=i-[a-f0-9]+') }}"
+      - "Extracted IDs: {{ ec2_instance_ids }}"
+  when: ec2_instance_ids | length == 0 or ec2_instance_ids | length != instances | length
+
+- name: Set instance IDs by region using module index
+  set_fact:
+    instance_id_map: "{{ instance_id_map | default({}) | combine({
+      instances[(item.0 | int) - 1].aws_region: item.1
+    }) }}"
+  loop: "{{ ec2_instance_ids }}"
+  when:
+    - ec2_instance_ids | length > 0
+    - item is sequence
+    - item | length == 2
+
+- name: Alternative - if regex doesn't capture module index, map sequentially
+  set_fact:
+    instance_id_map: "{{ instance_id_map | default({}) | combine({
+      instances[idx].aws_region: (item.1 if item is sequence and item|length == 2 else item)
+    }) }}"
+  loop: "{{ ec2_instance_ids }}"
+  loop_control:
+    index_var: idx
+  when:
+    - ec2_instance_ids | length > 0
+    - instance_id_map | default({}) | length == 0
+
+- name: Debug instance IDs and mapping
+  debug:
+    msg:
+      - "Extracted instance IDs: {{ ec2_instance_ids }}"
+      - "Instance ID map: {{ instance_id_map | default({}) }}"
+      - "Number of instances expected: {{ instances | length }}"
+      - "Instances regions: {{ instances | map(attribute='aws_region') | list }}"
+
+- name: Store Terraform log content
+  set_fact:
+    terraform_log_content: "{{ lookup('ansible.builtin.file', '/tmp/' + run_id) }}"
+
+- name: Debug Terraform log content
+  debug:
+    var: terraform_log_content
+  when: ec2_instance_ids | length == 0
+
+- name: Store and debug extracted instance IDs
+  set_fact:
+    extracted_instance_ids: "{{ ec2_instance_ids }}"
+  register: instance_id_debug
+
+- name: Store Terraform log content
+  set_fact:
+    terraform_log_content: "{{ lookup('ansible.builtin.file', '/tmp/' + run_id) }}"
+
+- name: Store and debug extracted instance IDs
+  set_fact:
+    extracted_instance_ids: "{{ ec2_instance_ids }}"
+  register: instance_id_debug
+
+# - name: Extract security group IDs from Terraform logs
+#   set_fact:
+#     sg_ids: "{{ lookup('ansible.builtin.file', '/tmp/' + run_id) | \
+#       regex_findall('aws_security_group.main.*Creation complete.*id=(sg-[a-f0-9]+)') | \
+#       map('regex_replace', '^.*id=(.*)$', '\\1') | list }}"
+
+# - name: Set security group IDs by region
+#   set_fact:
+#     sg_id_map: "{{ sg_id_map | default({}) | combine({
+#       instances[idx].aws_region: sg_ids[idx]
+#     }) }}"
+#   loop: "{{ sg_ids }}"
+#   loop_control:
+#     index_var: idx
+
+# - name: Debug security group IDs
+#   debug:
+#     var: sg_id_map

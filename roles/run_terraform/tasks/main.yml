@@ -1,0 +1,110 @@
+---
+- name: Debug tfc_state value at role start
+  debug:
+    msg: "tfc_state is: {{ tfc_state }}"
+
+- name: Force set tfc_state from playbook vars (override defaults)
+  set_fact:
+    tfc_state: "{{ tfc_state }}"
+  when: tfc_state is defined
+
+- include_tasks: vault/get_secrets.yml
+  when: AUTH_TOKEN is undefined
+
+- block:
+    - include_tasks: tower/get_org.yml
+      when: project_name is undefined
+
+    - set_fact:
+        aap_org_name: "{{ project_name | replace('&','and') }}"
+      when: project_name is defined
+
+    - set_fact:
+        count: -1
+
+    - file:
+        path: "/tmp/config_content"
+        state: directory
+      become: true
+
+    - name: write provider.tf file to local disk
+      template:
+        src: "provider.tf.j2"
+        dest: "/tmp/config_content/provider.tf"
+        mode: 0777
+      become: true
+
+    - name: write terraform-aws-gn-base-virtual-appliance.tf file to local disk
+      template:
+        src: "terraform-aws-gn-base-virtual-appliance.tf.j2"
+        dest: "/tmp/config_content/terraform-aws-gn-base-virtual-appliance.tf"
+        mode: 0777
+      become: true
+
+    - name:
+      debug:
+        msg: "{{ lookup('ansible.builtin.file', '/tmp/config_content/terraform-aws-gn-base-virtual-appliance.tf') }}"
+
+    - include_tasks: jinja/create_tf.yml
+
+    - include_tasks: terraform_tasks/get_workspace.yml
+      when: tfc_workspace_name is undefined
+
+    - include_tasks: terraform_tasks/create_configuration.yml
+
+    - include_tasks: terraform_tasks/upload_config.yml
+
+    # When terraform_targets is specified, we disabled auto-queue-runs
+    # so we need to manually create a run with the targets
+    - include_tasks: terraform_tasks/create_run.yml
+      when: terraform_targets | default([]) | length > 0
+
+    - include_tasks: terraform_tasks/get_run_state.yml
+
+  when: tfc_state != "destroy"
+
+- block:
+    - include_tasks: terraform_tasks/get_run_plan_info.yml
+    - include_tasks: terraform_tasks/get_run_apply_info.yml
+      when: tfc_state != "plan"
+  when: tfc_state != "destroy"
+
+- block:
+    - name: Pause for 10 seconds before running destroy tasks
+      pause:
+        seconds: 10
+
+    - name: ensure config dir exists for destroy
+      file:
+        path: "/tmp/config_content"
+        state: directory
+      become: true
+
+    - name: write destroy.tf file to local disk
+      template:
+        src: "destroy.tf.j2"
+        dest: "/tmp/config_content/destroy.tf"
+        mode: 0777
+      become: true
+
+    - name: prepare jinja artifacts (show tf files)
+      set_fact:
+        jinja_template_name: "destroy"
+
+    - include_tasks: jinja/create_tf.yml
+
+    - include_tasks: terraform_tasks/get_workspace.yml
+      when: tfc_workspace_name is undefined
+
+    - include_tasks: terraform_tasks/create_configuration.yml
+
+    - include_tasks: terraform_tasks/upload_config.yml
+
+    - include_tasks: terraform_tasks/create_run.yml
+      when: terraform_targets | default([]) | length > 0
+
+    - include_tasks: terraform_tasks/get_run_state.yml
+
+  when:
+    - tfc_state == "destroy"
+    - tfc_allow_destroy | default(true) | bool

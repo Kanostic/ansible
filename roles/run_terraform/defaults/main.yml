@@ -1,0 +1,28 @@
+---
+project_name: NDO
+ansible_aws_role: "mi-ansible-aap"
+tfc_state: apply
+tfc_aws_role: "mi-iaac"
+tfc_hostname: "app.terraform.io"
+tfc_organization_name: "marriott"
+tfc_workspace_name: "ws-YFrTWHtqejmX8vmZ"
+use_empty_tf: false
+tfc_allow_destroy: true
+tfc_api_run_module_auto_queue_runs: "true"
+tfc_api_run_module_speculative: "false"
+tfc_api_run_module_auto_apply: "true"
+tfc_api_run_module_allow_destroy_plan: "true"
+provider: "aws"
+no_log: false
+commit_variables: true
+# Default AMI mappings for auto-selection
+region_ami_mapping:
+  "us-east-1": "ami-0d38c5d8030f6e547"
+  "us-east-2": "ami-003148dae477822a8"
+  "us-west-2": "ami-07309197678b9fbd8"
+  "ap-south-2": "ami-012e7d19a7d89d088"
+  "af-south-1": "ami-0356d9b733bb1b4cb"
+  "ap-northeast-1": "ami-0de266e3b9101d52b"
+  "ap-southeast-1": "ami-0f0c2878d1ad3c4cb"
+  "eu-central-1": "ami-02be6eccbf1072e30"
+  "eu-west-2": "ami-02ca3a54d7287ef38"

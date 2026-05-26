@@ -1,0 +1,60 @@
+# https://developer.hashicorp.com/terraform/cloud-docs/api-docs/run
+
+- name: waiting on the workspace run to complete
+  pause:
+    seconds: "{{ workspace_run_wait | default('30') }}"
+
+- name: collect workspace run info
+  uri:
+    url: "https://{{ tfc_hostname }}/api/v2/workspaces/{{ tfc_workspace_name }}/runs"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ AUTH_TOKEN }}"
+      Content-Type: application/vnd.api+json
+    force_basic_auth: True
+    validate_certs: False
+    status_code:
+      - 200
+    timeout: 300
+  register: getrun_result
+
+- name: workspace status and run id
+  set_fact:
+    workspace_status: "{{ getrun_result.json.data[0].attributes.status }}"
+    run_id: "{{ getrun_result.json.data[0].id }}"
+
+- name: print workspace status
+  debug:
+    var: workspace_status
+
+- name: check planned for destroys
+  include_tasks: terraform_tasks/check_plan.yml
+  when: tfc_state == "apply" and (
+      workspace_status == "planned" or
+      workspace_status == "pending" or
+      workspace_status == "cost_estimated" or
+      workspace_status == "post_plan_completed" or
+      workspace_status == "planned_and_finished"
+    )
+
+- name: check planned for destroy runs
+  include_tasks: terraform_tasks/check_plan.yml
+  when: tfc_state == "destroy" and (
+      workspace_status == "planned" or
+      workspace_status == "pending" or
+      workspace_status == "cost_estimated" or
+      workspace_status == "post_plan_completed" or
+      workspace_status == "planned_and_finished"
+    )
+
+- name: collect apply log for failed runs
+  include_tasks: get_run_apply_info.yml
+  when: workspace_status in ['errored', 'discarded', 'canceled', 'force_canceled', 'applied', 'planned_and_finished']
+
+- name: report and fail if workspace run fails with detailed logs
+  include_tasks: report_run_failure.yml
+  when: workspace_status in ['errored', 'discarded', 'canceled', 'force_canceled']
+
+- name: rerun state check
+  include_tasks: get_run_state.yml
+  when: workspace_status not in ['applied', 'errored', 'discarded', 'canceled', 'force_canceled', 'planned_and_finished']
